@@ -2,15 +2,21 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 import { Checklist, ChecklistItem, ParsedChecklist } from '../models/types';
 import { v4 as uuidv4 } from 'uuid';
+import outputs from '../../amplify_outputs.json';
 
 // クライアントインスタンスを保持する変数（初期値はnull）
 let _client: ReturnType<typeof generateClient<Schema>> | null = null;
 
 // クライアントを安全に取得する関数（遅延初期化）
-// これにより、Amplify.configure()が完了してからgenerateClient()が実行されることを保証します
 const getClient = () => {
   if (!_client) {
-    _client = generateClient<Schema>();
+    try {
+      _client = generateClient<Schema>();
+    } catch (e) {
+      console.error("Amplify Client Generation Failed:", e);
+      console.log("Current Config:", JSON.stringify(outputs, null, 2));
+      throw new Error("バックエンドへの接続に失敗しました。設定ファイルを確認してください。");
+    }
   }
   return _client;
 };
@@ -34,7 +40,6 @@ export const dataService = {
     try {
       const client = getClient();
       // DynamoDBから全件取得
-      // Fix: list() expects arguments, passing empty object
       const { data: items } = await client.models.Checklist.list({});
       
       // アプリ側の型に合わせて整形＆ソート
@@ -55,8 +60,7 @@ export const dataService = {
     try {
       const client = getClient();
       const { data } = await client.models.Checklist.get({ id });
-      // Fix: Cast to any to avoid incorrect "any[]" type inference from generated client
-      const item = data as any;
+      const item = data as any; // 型推論回避
 
       if (!item) return null;
       
@@ -97,8 +101,7 @@ export const dataService = {
       category,
       order: maxOrder + 1,
     });
-    // Fix: Cast to any to avoid incorrect "any[]" type inference
-    const newItem = data as any;
+    const newItem = data as any; // 型推論回避
 
     if (errors) {
         throw new Error(errors.map(e => e.message).join(', '));
@@ -124,8 +127,7 @@ export const dataService = {
       id,
       ...validUpdates
     });
-    // Fix: Cast to any to avoid incorrect "any[]" type inference
-    const updatedItem = data as any;
+    const updatedItem = data as any; // 型推論回避
 
     if (errors) {
         throw new Error(errors.map(e => e.message).join(', '));
@@ -142,7 +144,6 @@ export const dataService = {
 
   reorderChecklists: async (checklists: Checklist[]): Promise<void> => {
     const client = getClient();
-    // 変更があったアイテムだけを更新（一括更新がないためループで処理）
     try {
         await Promise.all(checklists.map(list => 
             client.models.Checklist.update({
@@ -181,7 +182,6 @@ export const dataService = {
     const newCats = cats.filter(c => c !== name);
     setCategoriesStorage(newCats);
     
-    // 削除されたカテゴリに属するリストを「メイン」に移動（これはクラウド上のデータを更新）
     try {
         const client = getClient();
         const allLists = await dataService.listChecklists();
