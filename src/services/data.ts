@@ -2,16 +2,27 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 import { Checklist, ChecklistItem, ParsedChecklist } from '../models/types';
 import { v4 as uuidv4 } from 'uuid';
+import outputs from '../../amplify_outputs.json';
 
 // クライアントの遅延初期化
 let _client: ReturnType<typeof generateClient<Schema>> | null = null;
 
 const getClient = () => {
   if (!_client) {
+    // 設定ファイルのチェック
+    const hasValidConfig = outputs && (
+        (outputs as any).data || 
+        Object.keys(outputs).length > 1
+    );
+
+    if (!hasValidConfig) {
+        throw new Error("Amplify configuration is missing or invalid. Ensure the backend is deployed and amplify_outputs.json is generated.");
+    }
+
     try {
       _client = generateClient<Schema>();
     } catch (e) {
-      console.error("Failed to initialize Amplify Data Client. Ensure amplify_outputs.json is valid.", e);
+      console.error("Failed to initialize Amplify Data Client.", e);
       throw e;
     }
   }
@@ -22,8 +33,8 @@ export const dataService = {
   // --- Checklist Operations (AWS Amplify Data) ---
 
   listChecklists: async (): Promise<Checklist[]> => {
-    const client = getClient();
     try {
+      const client = getClient();
       const { data: items } = await client.models.Checklist.list({});
       
       const formattedItems = items.map(item => ({
@@ -34,14 +45,14 @@ export const dataService = {
 
       return formattedItems.sort((a, b) => (a.order || 0) - (b.order || 0));
     } catch (e) {
-      console.error("Failed to fetch checklists. Check your backend connection.", e);
+      console.error("Failed to fetch checklists.", e);
       throw e;
     }
   },
 
   getChecklist: async (id: string): Promise<ParsedChecklist | null> => {
-    const client = getClient();
     try {
+      const client = getClient();
       const { data } = await client.models.Checklist.get({ id });
       const item = data as any;
 
@@ -63,7 +74,7 @@ export const dataService = {
       } as ParsedChecklist;
     } catch (e) {
       console.error(`Failed to fetch checklist ${id}`, e);
-      return null;
+      throw e;
     }
   },
 
