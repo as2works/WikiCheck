@@ -22,6 +22,9 @@ const Home: React.FC = () => {
   // DnD State
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
 
+  // List Creation State
+  const [isCreatingList, setIsCreatingList] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -48,42 +51,62 @@ const Home: React.FC = () => {
       setCategories(catsData);
     } catch (err) {
       console.error(err);
+      // エラー時は何もしないか、必要であればユーザーに通知
     } finally {
       setLoading(false);
     }
   };
 
   const handleCreate = async () => {
-    const newItem = dataService.generateInitialItem();
-    newItem.text = "新しいリスト";
-    newItem.type = 'h1';
-    
-    const newList = await dataService.createChecklist(
-        "名称未設定リスト", 
-        [newItem, { ...dataService.generateInitialItem(), text: "" }],
-        activeTab
-    );
-    navigate(`/list/${newList.id}`);
+    if (isCreatingList) return;
+    setIsCreatingList(true);
+    try {
+      const newItem = dataService.generateInitialItem();
+      newItem.text = "新しいリスト";
+      newItem.type = 'h1';
+      
+      const newList = await dataService.createChecklist(
+          "名称未設定リスト", 
+          [newItem, { ...dataService.generateInitialItem(), text: "" }],
+          activeTab
+      );
+      navigate(`/list/${newList.id}`);
+    } catch (error) {
+      console.error("Failed to create checklist:", error);
+      alert("リストの作成に失敗しました。ネットワーク接続を確認してください。");
+    } finally {
+      setIsCreatingList(false);
+    }
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!window.confirm('本当に削除しますか？')) return;
-    await dataService.deleteChecklist(id);
-    setChecklists(prev => prev.filter(l => l.id !== id));
+    try {
+      await dataService.deleteChecklist(id);
+      setChecklists(prev => prev.filter(l => l.id !== id));
+    } catch (error) {
+      console.error("Delete failed:", error);
+      alert("削除に失敗しました。");
+    }
   };
 
   const handleDuplicate = async (e: React.MouseEvent, list: Checklist) => {
     e.stopPropagation();
-    let content = [];
     try {
-        content = JSON.parse(list.content);
-    } catch (e) {
-        content = [];
+      let content = [];
+      try {
+          content = JSON.parse(list.content);
+      } catch (e) {
+          content = [];
+      }
+      await dataService.createChecklist(`${list.title} (コピー)`, content, list.category);
+      const all = await dataService.listChecklists();
+      setChecklists(all);
+    } catch (error) {
+      console.error("Duplicate failed:", error);
+      alert("複製に失敗しました。");
     }
-    await dataService.createChecklist(`${list.title} (コピー)`, content, list.category);
-    const all = await dataService.listChecklists();
-    setChecklists(all);
   };
 
   // --- Category Management ---
@@ -189,11 +212,15 @@ const Home: React.FC = () => {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
+    try {
+      return new Date(dateStr).toLocaleDateString('ja-JP', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+    } catch (e) {
+      return '';
+    }
   };
 
   const displayedChecklists = checklists.filter(c => c.category === activeTab);
@@ -213,10 +240,11 @@ const Home: React.FC = () => {
           
           <button
               onClick={handleCreate}
-              className="w-full sm:w-auto flex justify-center items-center gap-2 bg-accent text-white px-6 py-3 rounded-xl hover:bg-red-600 transition-all shadow-pop hover:shadow-pop-hover hover:-translate-y-0.5 font-bold"
+              disabled={isCreatingList}
+              className={`w-full sm:w-auto flex justify-center items-center gap-2 bg-accent text-white px-6 py-3 rounded-xl hover:bg-red-600 transition-all shadow-pop hover:shadow-pop-hover hover:-translate-y-0.5 font-bold ${isCreatingList ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              <Plus size={20} strokeWidth={3} />
-              <span>新規リスト作成</span>
+              {isCreatingList ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} strokeWidth={3} />}
+              <span>{isCreatingList ? '作成中...' : '新規リスト作成'}</span>
             </button>
         </header>
 
@@ -258,7 +286,7 @@ const Home: React.FC = () => {
                         }}
                         onBlur={handleCancelAddCategory} // Auto cancel on click outside
                         placeholder="タブ名"
-                        className="w-24 text-sm font-bold text-primary outline-none bg-transparent"
+                        className="w-full min-w-[80px] max-w-[120px] text-sm font-bold text-primary outline-none bg-transparent"
                     />
                     <button onClick={handleConfirmAddCategory} className="text-accent hover:bg-red-50 rounded p-0.5">
                         <Check size={16} />
