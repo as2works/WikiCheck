@@ -1,0 +1,5 @@
+{
+  "name": "チェックリスト",
+  "description": "A sophisticated, wiki-style checklist application with hierarchical organization, seamless hybrid input for PC/mobile, and offline-capable synchronization.",
+  "requestFramePermissions": []
+}
