@@ -2,83 +2,48 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 import { Checklist, ChecklistItem, ParsedChecklist } from '../models/types';
 import { v4 as uuidv4 } from 'uuid';
-import outputs from '../../amplify_outputs.json';
 
-// クライアントインスタンスを保持する変数
+// クライアントの遅延初期化
 let _client: ReturnType<typeof generateClient<Schema>> | null = null;
 
-// 設定が有効かどうかの簡易チェック
-const isConfigValid = () => {
-  return outputs && (
-    (outputs as any).auth || 
-    (outputs as any).data || 
-    Object.keys(outputs).length > 1
-  );
-};
-
-// クライアントを安全に取得する関数（遅延初期化）
 const getClient = () => {
   if (!_client) {
-    if (!isConfigValid()) {
-      // 設定が無効な場合はエラーを投げてUI側でキャッチさせる
-      throw new Error("Amplify configuration is invalid. Please run 'npx ampx sandbox'.");
-    }
-    
     try {
       _client = generateClient<Schema>();
     } catch (e) {
-      console.error("Amplify Client Generation Failed:", e);
+      console.error("Failed to initialize Amplify Data Client. Ensure amplify_outputs.json is valid.", e);
       throw e;
     }
   }
   return _client;
 };
 
-// カテゴリ用の一時的なローカル保存キー
-const CATEGORIES_KEY = 'wikicheck_categories';
-
-const getCategoriesStorage = (): string[] => {
-  try {
-    const data = localStorage.getItem(CATEGORIES_KEY);
-    return data ? JSON.parse(data) : ['メイン'];
-  } catch (e) {
-    return ['メイン'];
-  }
-};
-
-const setCategoriesStorage = (categories: string[]) => {
-  localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
-};
-
 export const dataService = {
   // --- Checklist Operations (AWS Amplify Data) ---
 
   listChecklists: async (): Promise<Checklist[]> => {
+    const client = getClient();
     try {
-      const client = getClient();
-      // DynamoDBから全件取得
       const { data: items } = await client.models.Checklist.list({});
       
-      // アプリ側の型に合わせて整形＆ソート
       const formattedItems = items.map(item => ({
         ...item,
-        category: item.category || 'メイン', // null対策
+        category: item.category || 'メイン',
         order: item.order || 0
       })) as Checklist[];
 
       return formattedItems.sort((a, b) => (a.order || 0) - (b.order || 0));
     } catch (e) {
-      console.error("Failed to list checklists", e);
-      // エラー時は空配列を返す（UI側でローディングが終わるようにする）
-      return [];
+      console.error("Failed to fetch checklists. Check your backend connection.", e);
+      throw e;
     }
   },
 
   getChecklist: async (id: string): Promise<ParsedChecklist | null> => {
+    const client = getClient();
     try {
-      const client = getClient();
       const { data } = await client.models.Checklist.get({ id });
-      const item = data as any; // 型推論回避
+      const item = data as any;
 
       if (!item) return null;
       
@@ -86,7 +51,8 @@ export const dataService = {
       try {
         items = JSON.parse(item.content);
       } catch (e) {
-        console.error("Failed to parse checklist content", e);
+        console.error("JSON Parse error for content:", e);
+        items = [];
       }
 
       return {
@@ -96,83 +62,73 @@ export const dataService = {
         order: item.order || 0
       } as ParsedChecklist;
     } catch (e) {
-      console.error("Failed to get checklist", e);
+      console.error(`Failed to fetch checklist ${id}`, e);
       return null;
     }
   },
 
   createChecklist: async (title: string, items: ChecklistItem[] = [], category: string = 'メイン'): Promise<Checklist> => {
+    const client = getClient();
+    
+    // 最大オーダーを取得（簡易実装：同時書き込み時の競合は許容）
+    let maxOrder = 0;
     try {
-      // 現在の最大オーダーを取得して末尾に追加
-      let maxOrder = 0;
-      try {
-          const currentList = await dataService.listChecklists();
-          maxOrder = currentList.reduce((max, item) => Math.max(max, item.order || 0), 0);
-      } catch (e) {
-          console.warn("Failed to get max order, defaulting to 0", e);
-      }
-      
-      // AWSへ保存
-      const client = getClient();
-      const { data, errors } = await client.models.Checklist.create({
-        title,
-        content: JSON.stringify(items),
-        category,
-        order: maxOrder + 1,
-      });
-      const newItem = data as any; // 型推論回避
-
-      if (errors) {
-          throw new Error(errors.map(e => e.message).join(', '));
-      }
-
-      if (!newItem) {
-          throw new Error("Failed to create checklist: No data returned");
-      }
-
-      return {
-          ...newItem,
-          category: newItem.category || 'メイン',
-          order: newItem.order || 0
-      } as Checklist;
+        const { data: currentList } = await client.models.Checklist.list({});
+        maxOrder = currentList.reduce((max, item) => Math.max(max, item.order || 0), 0);
     } catch (e) {
-      console.error("Create failed", e);
-      throw e;
+        console.warn("Failed to determine max order", e);
     }
+    
+    const { data, errors } = await client.models.Checklist.create({
+      title,
+      content: JSON.stringify(items),
+      category,
+      order: maxOrder + 1,
+    });
+
+    if (errors) {
+      throw new Error(errors.map(e => e.message).join(', '));
+    }
+    
+    if (!data) throw new Error("Create failed: No data returned");
+
+    const newItem = data as any;
+    return {
+        ...newItem,
+        category: newItem.category || 'メイン',
+        order: newItem.order || 0
+    } as Checklist;
   },
 
   updateChecklist: async (id: string, updates: Partial<Checklist>): Promise<Checklist> => {
-    try {
-      // 不要なフィールドを除外
-      const { createdAt, updatedAt, ...validUpdates } = updates;
-      
-      const client = getClient();
-      const { data, errors } = await client.models.Checklist.update({
-        id,
-        ...validUpdates
-      });
-      const updatedItem = data as any; // 型推論回避
-
-      if (errors) {
-          throw new Error(errors.map(e => e.message).join(', '));
-      }
-
-      if (!updatedItem) throw new Error("Update failed");
-
-      return {
-          ...updatedItem,
-          category: updatedItem.category || 'メイン',
-          order: updatedItem.order || 0
-      } as Checklist;
-    } catch (e) {
-      console.error("Update failed", e);
-      throw e;
+    const client = getClient();
+    
+    // システム管理フィールドを除外
+    const { createdAt, updatedAt, ...validUpdates } = updates;
+    
+    const { data, errors } = await client.models.Checklist.update({
+      id,
+      ...validUpdates
+    });
+    
+    if (errors) {
+      throw new Error(errors.map(e => e.message).join(', '));
     }
+
+    if (!data) throw new Error("Update failed: No data returned");
+
+    const updatedItem = data as any;
+    return {
+        ...updatedItem,
+        category: updatedItem.category || 'メイン',
+        order: updatedItem.order || 0
+    } as Checklist;
   },
 
   reorderChecklists: async (checklists: Checklist[]): Promise<void> => {
+    const client = getClient();
     try {
-      const client = getClient();
+      // 一括更新（バッチ処理がないため並列リクエスト）
       await Promise.all(checklists.map(list => 
           client.models.Checklist.update({
               id: list.id,
@@ -185,54 +141,11 @@ export const dataService = {
   },
 
   deleteChecklist: async (id: string): Promise<void> => {
-    try {
-      const client = getClient();
-      await client.models.Checklist.delete({ id });
-    } catch (e) {
-      console.error("Delete failed", e);
-      throw e;
-    }
-  },
-  
-  // --- Category Operations (Local Preference) ---
-
-  getCategories: async (): Promise<string[]> => {
-    return getCategoriesStorage();
+    const client = getClient();
+    await client.models.Checklist.delete({ id });
   },
 
-  addCategory: async (name: string): Promise<string[]> => {
-    const cats = getCategoriesStorage();
-    if (!cats.includes(name)) {
-      const newCats = [...cats, name];
-      setCategoriesStorage(newCats);
-      return newCats;
-    }
-    return cats;
-  },
-
-  deleteCategory: async (name: string): Promise<string[]> => {
-    const cats = getCategoriesStorage();
-    const newCats = cats.filter(c => c !== name);
-    setCategoriesStorage(newCats);
-    
-    // 削除されたカテゴリに属するリストを「メイン」に移動
-    try {
-        const client = getClient();
-        const allLists = await dataService.listChecklists();
-        const itemsToMove = allLists.filter(l => l.category === name);
-        
-        await Promise.all(itemsToMove.map(item => 
-            client.models.Checklist.update({
-                id: item.id,
-                category: 'メイン'
-            })
-        ));
-    } catch (e) {
-        console.error("Failed to move items from deleted category", e);
-    }
-
-    return newCats;
-  },
+  // --- Utility ---
 
   generateInitialItem: (): ChecklistItem => ({
     id: uuidv4(),

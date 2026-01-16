@@ -7,7 +7,7 @@ import { Checklist } from '../models/types';
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const [checklists, setChecklists] = useState<Checklist[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<string[]>(['メイン']);
   const [activeTab, setActiveTab] = useState<string>('メイン');
   const [loading, setLoading] = useState(true);
   
@@ -38,20 +38,28 @@ const Home: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [listsData, catsData] = await Promise.all([
-        dataService.listChecklists(),
-        dataService.getCategories()
-      ]);
-      const sanitizedLists = listsData.map(l => ({ ...l, category: l.category || 'メイン' }));
-      setChecklists(sanitizedLists);
+      const listsData = await dataService.listChecklists();
       
-      if (!catsData.includes(activeTab) && catsData.length > 0) {
-        setActiveTab(catsData[0]);
+      // データからユニークなカテゴリを抽出してタブを生成
+      const uniqueCats = new Set<string>(['メイン']);
+      listsData.forEach(l => {
+        if (l.category) uniqueCats.add(l.category);
+      });
+      
+      const sortedCats = Array.from(uniqueCats).sort();
+      // "メイン"を先頭に
+      const finalCats = ['メイン', ...sortedCats.filter(c => c !== 'メイン')];
+
+      setChecklists(listsData);
+      setCategories(finalCats);
+      
+      // アクティブタブが存在しなくなった場合のフォールバック
+      if (!uniqueCats.has(activeTab)) {
+        setActiveTab('メイン');
       }
-      setCategories(catsData);
+
     } catch (err) {
       console.error(err);
-      // エラー時は何もしないか、必要であればユーザーに通知
     } finally {
       setLoading(false);
     }
@@ -65,6 +73,7 @@ const Home: React.FC = () => {
       newItem.text = "新しいリスト";
       newItem.type = 'h1';
       
+      // 現在のタブに作成する
       const newList = await dataService.createChecklist(
           "名称未設定リスト", 
           [newItem, { ...dataService.generateInitialItem(), text: "" }],
@@ -84,7 +93,11 @@ const Home: React.FC = () => {
     if (!window.confirm('本当に削除しますか？')) return;
     try {
       await dataService.deleteChecklist(id);
-      setChecklists(prev => prev.filter(l => l.id !== id));
+      
+      // UI更新とカテゴリ再計算
+      const newList = checklists.filter(l => l.id !== id);
+      setChecklists(newList);
+      recalcCategories(newList);
     } catch (error) {
       console.error("Delete failed:", error);
       alert("削除に失敗しました。");
@@ -101,25 +114,43 @@ const Home: React.FC = () => {
           content = [];
       }
       await dataService.createChecklist(`${list.title} (コピー)`, content, list.category);
-      const all = await dataService.listChecklists();
-      setChecklists(all);
+      await loadData(); // 全データ再取得で順序等を確実に同期
     } catch (error) {
       console.error("Duplicate failed:", error);
       alert("複製に失敗しました。");
     }
   };
 
-  // --- Category Management ---
+  // --- Category Management (Derived from Data) ---
+  
+  const recalcCategories = (currentLists: Checklist[], additionalCat?: string) => {
+      const uniqueCats = new Set<string>(['メイン']);
+      currentLists.forEach(l => {
+        if (l.category) uniqueCats.add(l.category);
+      });
+      if (additionalCat) uniqueCats.add(additionalCat);
+      
+      const sortedCats = Array.from(uniqueCats).sort();
+      const finalCats = ['メイン', ...sortedCats.filter(c => c !== 'メイン')];
+      setCategories(finalCats);
+  };
+
   const handleStartAddCategory = () => {
     setIsCreatingTab(true);
     setNewTabName('');
   };
 
   const handleConfirmAddCategory = async () => {
-    if (newTabName.trim()) {
-        const name = newTabName.trim();
-        const newCats = await dataService.addCategory(name);
-        setCategories(newCats);
+    const name = newTabName.trim();
+    if (name) {
+        // タブを作成する = そのカテゴリの空リストを作る等の処理ではなく、
+        // 今回は「UI上でタブを選択状態にし、次に作成するリストをそのカテゴリにする」フローとする。
+        // ただし、データドリブンのため、リストが一つもないカテゴリはリロードで消える仕様になる。
+        // これを防ぐため、「タブ作成時はまだ永続化しないが、UIには表示する」状態にする。
+        
+        if (!categories.includes(name)) {
+            setCategories(prev => [...prev, name]);
+        }
         setActiveTab(name);
     }
     setIsCreatingTab(false);
@@ -129,6 +160,7 @@ const Home: React.FC = () => {
     setIsCreatingTab(false);
   };
 
+  // カテゴリ削除 = そのカテゴリに含まれる全リストを「メイン」に移動
   const handleDeleteCategory = async (e: React.MouseEvent, cat: string) => {
     e.stopPropagation();
     if (cat === 'メイン') {
@@ -137,12 +169,22 @@ const Home: React.FC = () => {
     }
     if (!window.confirm(`「${cat}」タブを削除しますか？\n含まれるリストは「メイン」に移動します。`)) return;
     
-    const newCats = await dataService.deleteCategory(cat);
-    setCategories(newCats);
+    // Optimistic Update
+    const itemsToMove = checklists.filter(l => l.category === cat);
+    const updatedLists = checklists.map(l => l.category === cat ? { ...l, category: 'メイン' } : l);
+    setChecklists(updatedLists);
+    recalcCategories(updatedLists);
     setActiveTab('メイン');
-    
-    const listsData = await dataService.listChecklists();
-    setChecklists(listsData);
+
+    // API Call
+    try {
+        await Promise.all(itemsToMove.map(item => 
+            dataService.updateChecklist(item.id, { category: 'メイン' })
+        ));
+    } catch (e) {
+        console.error("Failed to move items", e);
+        loadData(); // Revert on error
+    }
   };
 
   // --- Move List Logic ---
@@ -158,17 +200,18 @@ const Home: React.FC = () => {
   const executeMove = async (targetCategory: string) => {
     if (!moveTargetList) return;
     try {
-        await dataService.updateChecklist(moveTargetList.id, { category: targetCategory });
-        
         // Optimistic update
-        setChecklists(prev => prev.map(l => 
+        const updatedLists = checklists.map(l => 
             l.id === moveTargetList.id ? { ...l, category: targetCategory } : l
-        ));
-        
-        // If moved out of current tab, user might want to know, but standard behavior is just disappear from view
+        );
+        setChecklists(updatedLists);
+        recalcCategories(updatedLists);
+
+        await dataService.updateChecklist(moveTargetList.id, { category: targetCategory });
     } catch (e) {
         console.error(e);
         alert('移動に失敗しました');
+        loadData();
     } finally {
         closeMoveModal();
     }
@@ -284,7 +327,7 @@ const Home: React.FC = () => {
                             if (e.key === 'Enter') handleConfirmAddCategory();
                             if (e.key === 'Escape') handleCancelAddCategory();
                         }}
-                        onBlur={handleCancelAddCategory} // Auto cancel on click outside
+                        onBlur={handleCancelAddCategory} 
                         placeholder="タブ名"
                         className="w-full min-w-[80px] max-w-[120px] text-sm font-bold text-primary outline-none bg-transparent"
                     />
@@ -312,7 +355,9 @@ const Home: React.FC = () => {
             {displayedChecklists.length === 0 ? (
                 <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-primary/20">
                     <p className="text-primary/50 font-medium text-lg">「{activeTab}」にリストがありません</p>
-                    <p className="text-primary/30 text-sm mt-2">右上のボタンから作成してください</p>
+                    <p className="text-primary/30 text-sm mt-2">
+                        {activeTab === 'メイン' ? '右上のボタンから作成してください' : 'リストを追加するか、タブを切り替えてください'}
+                    </p>
                 </div>
             ) : (
               displayedChecklists.map((list) => (
