@@ -12,7 +12,7 @@ const schema = a.schema({
     category: a.string(), // Tab group name
     order: a.integer(),   // For manual sorting
   })
-  .authorization(allow => [allow.publicApiKey()]),
+  .authorization((allow) => [allow.guest()]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
@@ -20,9 +20,6 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
-    defaultAuthorizationMode: 'apiKey',
-    apiKeyAuthorizationMode: {
-      expiresInDays: 30,
-    },
+    defaultAuthorizationMode: 'iam',
   },
 });
