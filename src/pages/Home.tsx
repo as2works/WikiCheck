@@ -21,6 +21,10 @@ const Home: React.FC = () => {
 
   // DnD State
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const checklistsRef = useRef<Checklist[]>([]);
+  const activeTabRef = useRef(activeTab);
+  const dragIdRef = useRef<string | null>(null);
+  const orderChangedRef = useRef(false);
 
   // List Creation State
   const [isCreatingList, setIsCreatingList] = useState(false);
@@ -217,41 +221,84 @@ const Home: React.FC = () => {
     }
   };
 
-  // --- Drag and Drop Logic ---
-  const handleDragStart = (e: React.DragEvent, id: string) => {
-    setDraggedItemId(id);
-    e.dataTransfer.effectAllowed = "move";
+  if (dragIdRef.current === null) {
+    checklistsRef.current = checklists;
+  }
+  activeTabRef.current = activeTab;
+
+  // --- Pointer reorder (mouse and touch) ---
+  const reorderTo = (targetId: string) => {
+    const dragId = dragIdRef.current;
+    if (!dragId || dragId === targetId) return;
+
+    const current = checklistsRef.current;
+    const tabLists = current.filter(c => c.category === activeTabRef.current);
+    if (!tabLists.some(c => c.id === dragId) || !tabLists.some(c => c.id === targetId)) return;
+
+    const next = [...current];
+    const from = next.findIndex(c => c.id === dragId);
+    const to = next.findIndex(c => c.id === targetId);
+    if (from === -1 || to === -1) return;
+
+    const [draggedItem] = next.splice(from, 1);
+    next.splice(to, 0, draggedItem);
+    checklistsRef.current = next;
+    orderChangedRef.current = true;
+    setChecklists(next);
   };
 
-  const handleDragOver = (e: React.DragEvent, targetId: string) => {
-    e.preventDefault();
-    if (!draggedItemId || draggedItemId === targetId) return;
-
-    const currentTabLists = checklists.filter(c => c.category === activeTab);
-    const dragIndex = currentTabLists.findIndex(c => c.id === draggedItemId);
-    const hoverIndex = currentTabLists.findIndex(c => c.id === targetId);
-
-    if (dragIndex === -1 || hoverIndex === -1) return;
-
-    // Global indices
-    const newChecklists = [...checklists];
-    const globalDragIndex = newChecklists.findIndex(c => c.id === draggedItemId);
-    const globalHoverIndex = newChecklists.findIndex(c => c.id === targetId);
-    
-    const draggedItem = newChecklists[globalDragIndex];
-    newChecklists.splice(globalDragIndex, 1);
-    newChecklists.splice(globalHoverIndex, 0, draggedItem);
-    
-    setChecklists(newChecklists);
-  };
-
-  const handleDragEnd = async () => {
+  const finishReorder = async () => {
+    if (!dragIdRef.current) return;
+    dragIdRef.current = null;
     setDraggedItemId(null);
-    const updatedLists = checklists.map((list, index) => ({
-        ...list,
-        order: index
+    if (!orderChangedRef.current) return;
+
+    const updatedLists = checklistsRef.current.map((list, index) => ({
+      ...list,
+      order: index
     }));
-    await dataService.reorderChecklists(updatedLists);
+    checklistsRef.current = updatedLists;
+    setChecklists(updatedLists);
+    try {
+      await dataService.reorderChecklists(updatedLists);
+    } catch (e) {
+      console.error(e);
+      loadData();
+    }
+  };
+
+  const handleGripPointerDown = (e: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture is unavailable for this event. Window listeners still track the gesture.
+    }
+    dragIdRef.current = id;
+    orderChangedRef.current = false;
+    setDraggedItemId(id);
+
+    const pointerId = e.pointerId;
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId || !dragIdRef.current) return;
+      const hit = document.elementsFromPoint(ev.clientX, ev.clientY)
+        .map(el => el.closest('[data-list-id]'))
+        .find(el => el && el.getAttribute('data-list-id') !== dragIdRef.current);
+      const targetId = hit?.getAttribute('data-list-id');
+      if (targetId) reorderTo(targetId);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      finishReorder();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   const formatDate = (dateStr: string) => {
@@ -363,10 +410,7 @@ const Home: React.FC = () => {
               displayedChecklists.map((list) => (
                 <div
                   key={list.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, list.id)}
-                  onDragOver={(e) => handleDragOver(e, list.id)}
-                  onDragEnd={handleDragEnd}
+                  data-list-id={list.id}
                   className={`
                     group bg-white rounded-xl border-2 border-transparent hover:border-primary/20 p-3 shadow-sm hover:shadow-pop transition-all relative overflow-hidden select-none
                     ${draggedItemId === list.id ? 'opacity-50 scale-[0.98]' : 'opacity-100'}
@@ -374,14 +418,20 @@ const Home: React.FC = () => {
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary group-hover:bg-accent transition-colors"></div>
 
-                  <div
-                    onClick={() => navigate(`/list/${list.id}`)}
-                    className="flex items-center gap-2 pl-1 cursor-pointer"
-                  >
-                    <div className="text-primary/30 cursor-grab active:cursor-grabbing shrink-0">
-                      <GripVertical size={16} />
-                    </div>
-                    <div className="flex-1 min-w-0">
+                  <div className="flex items-stretch gap-1 pl-1">
+                    <button
+                      type="button"
+                      aria-label="順番を変更"
+                      onPointerDown={(e) => handleGripPointerDown(e, list.id)}
+                      onClick={(e) => e.preventDefault()}
+                      className="touch-none w-11 shrink-0 flex items-center justify-center text-primary/40 cursor-grab active:cursor-grabbing"
+                    >
+                      <GripVertical size={18} />
+                    </button>
+                    <div
+                      onClick={() => navigate(`/list/${list.id}`)}
+                      className="flex-1 min-w-0 cursor-pointer py-0.5"
+                    >
                       <h3 className="text-base font-bold text-primary truncate">
                         {list.title || "名称未設定リスト"}
                       </h3>
