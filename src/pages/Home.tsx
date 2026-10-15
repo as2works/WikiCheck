@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Copy, Trash2, FileText, Loader2, Calendar, ChevronRight, X, GripVertical, FolderInput, Check } from 'lucide-react';
+import { Plus, Copy, Trash2, Loader2, Calendar, X, GripVertical, FolderInput, Check } from 'lucide-react';
 import { dataService } from '../services/data';
 import { Checklist } from '../models/types';
 
@@ -367,61 +367,58 @@ const Home: React.FC = () => {
                   onDragStart={(e) => handleDragStart(e, list.id)}
                   onDragOver={(e) => handleDragOver(e, list.id)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => navigate(`/list/${list.id}`)}
                   className={`
-                    group bg-white rounded-xl border-2 border-transparent hover:border-primary/20 p-5 shadow-sm hover:shadow-pop transition-all cursor-pointer flex items-center relative overflow-hidden select-none
+                    group bg-white rounded-xl border-2 border-transparent hover:border-primary/20 p-3 shadow-sm hover:shadow-pop transition-all relative overflow-hidden select-none
                     ${draggedItemId === list.id ? 'opacity-50 scale-[0.98]' : 'opacity-100'}
                   `}
                 >
-                  {/* Drag Handle */}
-                  <div className="absolute left-2 top-1/2 -translate-y-1/2 text-primary/10 group-hover:text-primary/30 cursor-grab active:cursor-grabbing p-2">
-                     <GripVertical size={20} />
-                  </div>
-
-                  {/* Decorative Border */}
                   <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary group-hover:bg-accent transition-colors"></div>
 
-                  <div className="ml-6 p-3 bg-blue-50 rounded-full mr-5 group-hover:bg-primary group-hover:text-white transition-colors text-primary">
-                      <FileText size={24} strokeWidth={2} />
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-bold text-primary truncate pr-4">
-                      {list.title || "名称未設定リスト"}
-                    </h3>
-                    <div className="flex items-center text-xs font-semibold text-primary/50 mt-1">
-                      <Calendar size={12} className="mr-1" />
-                      {formatDate(list.updatedAt)}
+                  <div
+                    onClick={() => navigate(`/list/${list.id}`)}
+                    className="flex items-center gap-2 pl-1 cursor-pointer"
+                  >
+                    <div className="text-primary/30 cursor-grab active:cursor-grabbing shrink-0">
+                      <GripVertical size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-base font-bold text-primary truncate">
+                        {list.title || "名称未設定リスト"}
+                      </h3>
+                      <div className="flex items-center text-xs font-semibold text-primary/50 mt-0.5">
+                        <Calendar size={12} className="mr-1 shrink-0" />
+                        {formatDate(list.updatedAt)}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Action Buttons */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100 absolute right-14 bg-white/95 pl-4 rounded-l-lg z-10">
-                    <button
-                      onClick={(e) => openMoveModal(e, list)}
-                      className="p-2 text-primary/60 hover:text-white hover:bg-primary rounded-lg transition-colors"
-                      title="移動"
-                    >
-                      <FolderInput size={18} />
-                    </button>
-                    <button
-                      onClick={(e) => handleDuplicate(e, list)}
-                      className="p-2 text-primary/60 hover:text-white hover:bg-primary rounded-lg transition-colors"
-                      title="複製"
-                    >
-                      <Copy size={18} />
-                    </button>
+                  <div className="mt-2 pt-2 border-t border-primary/10 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => openMoveModal(e, list)}
+                        className="flex items-center gap-1 px-2 py-1.5 text-xs font-bold text-primary/70 hover:text-white hover:bg-primary rounded-lg transition-colors"
+                        title="移動"
+                      >
+                        <FolderInput size={16} />
+                        <span>移動</span>
+                      </button>
+                      <button
+                        onClick={(e) => handleDuplicate(e, list)}
+                        className="flex items-center gap-1 px-2 py-1.5 text-xs font-bold text-primary/70 hover:text-white hover:bg-primary rounded-lg transition-colors"
+                        title="複製"
+                      >
+                        <Copy size={16} />
+                        <span>複製</span>
+                      </button>
+                    </div>
                     <button
                       onClick={(e) => handleDelete(e, list.id)}
-                      className="p-2 text-accent/80 hover:text-white hover:bg-accent rounded-lg transition-colors"
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-bold text-accent hover:text-white hover:bg-accent rounded-lg transition-colors"
                       title="削除"
                     >
-                      <Trash2 size={18} />
+                      <Trash2 size={16} />
+                      <span>削除</span>
                     </button>
-                  </div>
-                  
-                  <div className="text-primary/20 group-hover:text-primary group-hover:translate-x-1 transition-all z-0 ml-2">
-                    <ChevronRight size={24} strokeWidth={3} />
                   </div>
                 </div>
               ))
